@@ -2108,6 +2108,127 @@ def download_high_risk():
 
 
 # =========================================================
+# DOWNLOAD HIGH / MEDIUM / LOW RISK RECORDS
+# =========================================================
+
+@app.route("/api/risk-download/<level>")
+def download_risk_records(level):
+
+    if not login_required():
+        return redirect("/login")
+
+    risk = risk_name(level)
+
+    if not risk:
+        return jsonify({"error": "Invalid risk level"}), 400
+
+    source = request.args.get("source", "dataset")
+
+    try:
+
+        if source == "dataset":
+
+            if dataset_scored_df.empty:
+                df = pd.DataFrame()
+            else:
+                df = dataset_scored_df[
+                    dataset_scored_df["Risk"] == risk
+                ].copy()
+
+            if not df.empty:
+                df.rename(columns={
+                    "Dataset_ID": "Record_ID",
+                    "Probability": "Fraud_Probability",
+                    "Risk_Factors": "Risk_Factors"
+                }, inplace=True)
+
+        elif source == "manual":
+
+            conn = sqlite3.connect(DATABASE)
+
+            df = pd.read_sql_query(
+                """
+                SELECT
+                    id AS Record_ID,
+                    account_number AS Account_Number,
+                    amount AS Amount,
+                    transaction_date AS Transaction_Date,
+                    transaction_time AS Transaction_Time,
+                    hour AS Hour,
+                    frequency AS Frequency,
+                    merchant AS Merchant_Category,
+                    location AS Location,
+                    age AS Customer_Age,
+                    previous_transactions AS Previous_Transactions,
+                    average_amount AS Average_Amount,
+                    distance AS Distance_From_Usual_Location,
+                    prediction AS Prediction,
+                    probability AS Fraud_Probability,
+                    risk AS Risk,
+                    factors AS Risk_Factors,
+                    created_at AS Created_At
+                FROM predictions
+                WHERE risk = ?
+                ORDER BY id DESC
+                """,
+                conn,
+                params=(risk,)
+            )
+
+            conn.close()
+
+        else:
+            return jsonify({"error": "Invalid source"}), 400
+
+        if df.empty:
+            df = pd.DataFrame(columns=[
+                "Record_ID",
+                "Account_Number",
+                "Amount",
+                "Transaction_Date",
+                "Transaction_Time",
+                "Hour",
+                "Frequency",
+                "Merchant_Category",
+                "Location",
+                "Customer_Age",
+                "Previous_Transactions",
+                "Average_Amount",
+                "Distance_From_Usual_Location",
+                "Prediction",
+                "Fraud_Probability",
+                "Risk",
+                "Risk_Factors",
+                "Created_At"
+            ])
+
+        output = io.BytesIO()
+
+        with pd.ExcelWriter(
+            output,
+            engine="openpyxl"
+        ) as writer:
+
+            df.to_excel(
+                writer,
+                index=False,
+                sheet_name=risk.replace(" ", "_")
+            )
+
+        output.seek(0)
+
+        return send_file(
+            output,
+            as_attachment=True,
+            download_name=f"{level.lower()}_risk_transactions.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+# =========================================================
 # DOWNLOAD DATASET REPORT
 # =========================================================
 
@@ -3778,13 +3899,41 @@ RISK RECORDS
             </p>
         </div>
 
-        <a
-            href="/api/high-risk/download"
-            class="primary"
-            style="text-decoration:none;"
-        >
-            Download High Risk Excel
-        </a>
+        <div style="
+            display:flex;
+            gap:10px;
+            flex-wrap:wrap;
+            justify-content:flex-end;
+        ">
+
+            <a
+                id="downloadHighRisk"
+                href="/api/risk-download/high?source=dataset"
+                class="primary"
+                style="text-decoration:none;"
+            >
+                🔴 Download High Risk
+            </a>
+
+            <a
+                id="downloadMediumRisk"
+                href="/api/risk-download/medium?source=dataset"
+                class="primary"
+                style="text-decoration:none;"
+            >
+                🟠 Download Medium Risk
+            </a>
+
+            <a
+                id="downloadLowRisk"
+                href="/api/risk-download/low?source=dataset"
+                class="primary"
+                style="text-decoration:none;"
+            >
+                🟢 Download Low Risk
+            </a>
+
+        </div>
 
     </div>
 
@@ -5170,8 +5319,39 @@ async function loadRiskSummary() {
         ).innerText =
             data["Low Risk"] || 0;
 
+        updateRiskDownloadLinks();
+
     } catch (error) {
         console.error(error);
+    }
+}
+
+
+/* =====================================================
+RISK DOWNLOAD LINKS
+===================================================== */
+
+function updateRiskDownloadLinks() {
+
+    const source =
+        currentModule === "manual"
+            ? "manual"
+            : "dataset";
+
+    const high = document.getElementById("downloadHighRisk");
+    const medium = document.getElementById("downloadMediumRisk");
+    const low = document.getElementById("downloadLowRisk");
+
+    if (high) {
+        high.href = "/api/risk-download/high?source=" + source;
+    }
+
+    if (medium) {
+        medium.href = "/api/risk-download/medium?source=" + source;
+    }
+
+    if (low) {
+        low.href = "/api/risk-download/low?source=" + source;
     }
 }
 
@@ -5901,13 +6081,13 @@ if __name__ == "__main__":
     )
 
     print(
-        "http://127.0.0.1:5000"
-    )
-
-    print("=" * 60)
-
-    app.run(
-        debug=True,
-        host="127.0.0.1",
-        port=5000
+        "http://127.0.0.1:5000" 
+    ) 
+ 
+    print("=" * 60) 
+ 
+    app.run( 
+        debug=True, 
+        host="127.0.0.1", 
+        port=5000 
     )
